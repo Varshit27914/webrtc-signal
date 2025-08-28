@@ -1,112 +1,108 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>WebRTC Rooms Demo</title>
-  <style>
-    body { font-family: sans-serif; text-align: center; margin-top: 40px; }
-    video { width: 45%; margin: 5px; border: 2px solid #333; }
-  </style>
+  <title>WebRTC Rooms</title>
 </head>
 <body>
-  <h2>WebRTC with Rooms</h2>
+  <h1>WebRTC Rooms</h1>
 
-  <div id="controls">
-    <button id="createRoom">Create Room</button>
-    <input id="roomCodeInput" placeholder="Enter 4-digit code">
-    <button id="joinRoom">Join Room</button>
-    <p id="roomDisplay"></p>
-  </div>
+  <button id="createBtn">Create Room</button>
+  <input id="roomCode" placeholder="Enter room code">
+  <button id="joinBtn">Join Room</button>
 
+  <p id="status"></p>
   <video id="localVideo" autoplay playsinline muted></video>
   <video id="remoteVideo" autoplay playsinline></video>
 
-  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
   <script>
-    const socket = io("https://webrtc-signal.onrender.com"); // replace with your Render URL
-    let roomCode = null;
-    let pc;
+    const socket = io("https://webrtc-signal.onrender.com"); // replace with your server URL
+    let pc, roomCode;
 
     const localVideo = document.getElementById("localVideo");
     const remoteVideo = document.getElementById("remoteVideo");
 
-    async function initPeerConnection() {
+    // Create RTCPeerConnection
+    function createPeerConnection(code) {
       pc = new RTCPeerConnection({
         iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
       });
 
-      // Local media
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-      localVideo.srcObject = stream;
-      stream.getTracks().forEach(track => pc.addTrack(track, stream));
+      // Send ICE candidates to peer
+      pc.onicecandidate = (event) => {
+        if (event.candidate) {
+          socket.emit("signal", { code, data: { candidate: event.candidate } });
+        }
+      };
 
-      // Remote media
-      pc.ontrack = event => {
+      // Remote stream
+      pc.ontrack = (event) => {
         remoteVideo.srcObject = event.streams[0];
       };
 
-      // ICE candidates
-      pc.onicecandidate = event => {
-        if (event.candidate) {
-          socket.emit("candidate", { room: roomCode, candidate: event.candidate });
-        }
-      };
+      // Local stream
+      navigator.mediaDevices.getUserMedia({ video: true, audio: true })
+        .then((stream) => {
+          localVideo.srcObject = stream;
+          stream.getTracks().forEach((track) => pc.addTrack(track, stream));
+        });
     }
 
-    // Create Room
-    document.getElementById("createRoom").onclick = () => {
-      roomCode = Math.floor(1000 + Math.random() * 9000).toString(); // 4 digit
-      socket.emit("createRoom", roomCode, (response) => {
-        if (response.success) {
-          document.getElementById("roomDisplay").innerText = "Room Code: " + roomCode;
-          initPeerConnection();
-        } else {
-          alert(response.message);
-        }
-      });
+    // --- Socket events ---
+    document.getElementById("createBtn").onclick = () => {
+      socket.emit("create-room");
     };
 
-    // Join Room
-    document.getElementById("joinRoom").onclick = () => {
-      roomCode = document.getElementById("roomCodeInput").value;
-      socket.emit("joinRoom", roomCode, async (response) => {
-        if (response.success) {
-          document.getElementById("roomDisplay").innerText = "Joined Room: " + roomCode;
-          await initPeerConnection();
+    socket.on("room-created", (code) => {
+      roomCode = code;
+      document.getElementById("status").innerText = `Room created: ${code}`;
+      createPeerConnection(code);
+    });
 
-          // Create answer after receiving offer
-        } else {
-          alert(response.message);
-        }
-      });
+    document.getElementById("joinBtn").onclick = () => {
+      const code = document.getElementById("roomCode").value;
+      if (code) socket.emit("join-room", code);
     };
 
-    // Signaling
-    socket.on("ready", async () => {
-      // If I'm the room creator, make the offer
-      if (roomCode) {
-        const offer = await pc.createOffer();
-        await pc.setLocalDescription(offer);
-        socket.emit("offer", { room: roomCode, offer });
+    socket.on("room-joined", (code) => {
+      roomCode = code;
+      document.getElementById("status").innerText = `Joined room: ${code}`;
+      createPeerConnection(code);
+
+      // Start offer
+      pc.createOffer().then((offer) => {
+        pc.setLocalDescription(offer);
+        socket.emit("signal", { code, data: { sdp: offer } });
+      });
+    });
+
+    socket.on("user-joined", () => {
+      // Host creates offer when second user joins
+      pc.createOffer().then((offer) => {
+        pc.setLocalDescription(offer);
+        socket.emit("signal", { code: roomCode, data: { sdp: offer } });
+      });
+    });
+
+    socket.on("signal", async ({ data }) => {
+      if (data.sdp) {
+        await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
+        if (data.sdp.type === "offer") {
+          const answer = await pc.createAnswer();
+          await pc.setLocalDescription(answer);
+          socket.emit("signal", { code: roomCode, data: { sdp: answer } });
+        }
+      } else if (data.candidate) {
+        try {
+          await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+        } catch (e) {
+          console.error("Error adding ice candidate", e);
+        }
       }
     });
 
-    socket.on("offer", async (offer) => {
-      await pc.setRemoteDescription(new RTCSessionDescription(offer));
-      const answer = await pc.createAnswer();
-      await pc.setLocalDescription(answer);
-      socket.emit("answer", { room: roomCode, answer });
-    });
-
-    socket.on("answer", async (answer) => {
-      await pc.setRemoteDescription(new RTCSessionDescription(answer));
-    });
-
-    socket.on("candidate", async (candidate) => {
-      try {
-        await pc.addIceCandidate(new RTCIceCandidate(candidate));
-      } catch (err) {
-        console.error("Error adding ICE candidate", err);
-      }
+    socket.on("room-error", (msg) => {
+      document.getElementById("status").innerText = `❌ ${msg}`;
     });
   </script>
 </body>
