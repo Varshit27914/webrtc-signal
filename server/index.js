@@ -1,35 +1,48 @@
-import express from "express";
-import http from "http";
-import { Server } from "socket.io";
+const express = require("express");
+const http = require("http");
+const socketIo = require("socket.io");
+const axios = require("axios");
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server, {
-  cors: {
-    origin: "*", // allow Netlify frontend
-    methods: ["GET", "POST"]
+const io = socketIo(server);
+
+app.use(express.static("public")); // serve your HTML files
+
+// Xirsys credentials
+const XIRSYS_URL = "https://global.xirsys.net/_turn/MyFirstApp";
+const XIRSYS_AUTH = "Basic " + Buffer.from("backup27914:18954eb4-8410-11f0-aaf2-0242ac140003").toString("base64");
+
+// Endpoint to fetch ICE servers
+app.get("/ice", async (req, res) => {
+  try {
+    const response = await axios.put(
+      XIRSYS_URL,
+      { format: "urls" },
+      { headers: { Authorization: XIRSYS_AUTH, "Content-Type": "application/json" } }
+    );
+    res.json(response.data.v.iceServers);
+  } catch (err) {
+    console.error("Xirsys error:", err.message);
+    res.status(500).json({ error: "Failed to get ICE servers" });
   }
 });
 
+// Handle WebRTC signaling
 io.on("connection", (socket) => {
-  console.log("🔗 User connected:", socket.id);
+  console.log("New client connected:", socket.id);
 
-  socket.on("offer", (data) => {
-    socket.broadcast.emit("offer", data);
+  socket.on("join-room", () => {
+    socket.broadcast.emit("new-peer", socket.id);
   });
 
-  socket.on("answer", (data) => {
-    socket.broadcast.emit("answer", data);
-  });
-
-  socket.on("candidate", (data) => {
-    socket.broadcast.emit("candidate", data);
+  socket.on("signal", (data) => {
+    io.to(data.to).emit("signal", { from: socket.id, sdp: data.sdp });
   });
 
   socket.on("disconnect", () => {
-    console.log("❌ User disconnected:", socket.id);
+    console.log("Client disconnected:", socket.id);
   });
 });
 
-const PORT = process.env.PORT || 5000;
-server.listen(PORT, () => console.log(`✅ Signaling server running on ${PORT}`));
+server.listen(3000, () => console.log("Server running on http://localhost:3000"));
