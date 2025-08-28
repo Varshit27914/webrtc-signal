@@ -1,77 +1,50 @@
-// server.mjs
-import express from "express";
-import http from "http";
-import { Server } from "socket.io";
-import cors from "cors";
+const express = require("express");
+const http = require("http");
+const { Server } = require("socket.io");
 
 const app = express();
-app.use(cors());
-
 const server = http.createServer(app);
+const io = new Server(server);
 
-const io = new Server(server, {
-  cors: {
-    origin: "*",
-    methods: ["GET", "POST"]
-  }
-});
-
-const rooms = {}; // roomCode -> [socketIds]
+// Serve static files (our index.html)
+app.use(express.static(__dirname));
 
 io.on("connection", (socket) => {
   console.log("🔗 User connected:", socket.id);
 
-  // Create Room
-  socket.on("createRoom", (code, cb) => {
-    if (rooms[code]) {
-      cb({ success: false, message: "Room already exists" });
-      return;
-    }
-    rooms[code] = [socket.id];
-    socket.join(code);
-    cb({ success: true });
-    console.log(`✅ Room created: ${code}`);
+  // Tell others a new user joined
+  socket.broadcast.emit("user-joined", socket.id);
+
+  // Forward offer
+  socket.on("offer", (data) => {
+    io.to(data.target).emit("offer", {
+      sdp: data.sdp,
+      caller: socket.id,
+    });
   });
 
-  // Join Room
-  socket.on("joinRoom", (code, cb) => {
-    if (rooms[code] && rooms[code].length < 2) {
-      rooms[code].push(socket.id);
-      socket.join(code);
-      cb({ success: true });
-      io.to(code).emit("ready"); // notify both peers
-      console.log(`👥 ${socket.id} joined room ${code}`);
-    } else {
-      cb({ success: false, message: "Room full or not found" });
-    }
+  // Forward answer
+  socket.on("answer", (data) => {
+    io.to(data.target).emit("answer", {
+      sdp: data.sdp,
+      caller: socket.id,
+    });
   });
 
-  // Offer
-  socket.on("offer", ({ room, offer }) => {
-    socket.to(room).emit("offer", offer);
+  // Forward ICE candidates
+  socket.on("ice-candidate", (data) => {
+    io.to(data.target).emit("ice-candidate", {
+      candidate: data.candidate,
+      from: socket.id,
+    });
   });
 
-  // Answer
-  socket.on("answer", ({ room, answer }) => {
-    socket.to(room).emit("answer", answer);
-  });
-
-  // ICE Candidate
-  socket.on("candidate", ({ room, candidate }) => {
-    socket.to(room).emit("candidate", candidate);
-  });
-
-  // Cleanup
+  // On disconnect
   socket.on("disconnect", () => {
-    for (const code in rooms) {
-      rooms[code] = rooms[code].filter((id) => id !== socket.id);
-      if (rooms[code].length === 0) {
-        delete rooms[code];
-        console.log(`🗑️ Room ${code} deleted`);
-      }
-    }
+    console.log("❌ User disconnected:", socket.id);
+    socket.broadcast.emit("user-left", socket.id);
   });
 });
 
-const PORT = process.env.PORT || 5000;
-server.listen(PORT, () => console.log(`🚀 Server running on ${PORT}`));
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));
