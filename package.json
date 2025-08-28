@@ -1,7 +1,6 @@
 {
   "name": "webrtc-demo",
   "version": "1.0.0",
-  "description": "Simple multi-user WebRTC demo",
   "main": "server-index.js",
   "scripts": {
     "start": "node server-index.js"
