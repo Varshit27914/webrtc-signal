@@ -1,72 +1,92 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>WebRTC Demo</title>
+  <meta charset="utf-8" />
+  <title>WebRTC Demo - Multi User</title>
   <style>
-    video { width: 45%; margin: 5px; border: 2px solid #333; }
+    body { font-family: sans-serif; text-align: center; background: #111; color: #fff; }
+    #videos { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin-top: 20px; }
+    video { width: 300px; height: 200px; background: black; border-radius: 10px; }
   </style>
 </head>
 <body>
-  <h2>WebRTC Video Call</h2>
-  <video id="localVideo" autoplay playsinline muted></video>
-  <video id="remoteVideo" autoplay playsinline></video>
+  <h1>WebRTC Demo - Multi User</h1>
+  <div id="videos"></div>
 
-  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+  <!-- Import Socket.io client from server -->
+  <script src="/socket.io/socket.io.js"></script>
+
   <script>
-    const socket = io("https://YOUR_RENDER_URL"); // Replace with your Render server URL
-    const pc = new RTCPeerConnection();
+    const socket = io();
+    const peers = {};
+    const videos = document.getElementById("videos");
 
-    const localVideo = document.getElementById("localVideo");
-    const remoteVideo = document.getElementById("remoteVideo");
+    async function init() {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
 
-    // Local video
-    navigator.mediaDevices.getUserMedia({ video: true, audio: true })
-      .then(stream => {
-        localVideo.srcObject = stream;
-        stream.getTracks().forEach(track => pc.addTrack(track, stream));
+      // Show my video
+      const myVideo = document.createElement("video");
+      myVideo.srcObject = stream;
+      myVideo.autoplay = true;
+      myVideo.muted = true;
+      videos.appendChild(myVideo);
+
+      socket.emit("join-room");
+
+      socket.on("new-peer", async (id) => {
+        const pc = createPeer(id, stream, true);
+        peers[id] = pc;
       });
 
-    // Remote video
-    pc.ontrack = event => {
-      remoteVideo.srcObject = event.streams[0];
-    };
+      socket.on("peer-offer", async ({ from, offer }) => {
+        const pc = createPeer(from, stream, false);
+        peers[from] = pc;
+        await pc.setRemoteDescription(new RTCSessionDescription(offer));
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        socket.emit("peer-answer", { to: from, answer });
+      });
 
-    // ICE candidates
-    pc.onicecandidate = event => {
-      if (event.candidate) {
-        socket.emit("candidate", event.candidate);
-      }
-    };
+      socket.on("peer-answer", async ({ from, answer }) => {
+        await peers[from].setRemoteDescription(new RTCSessionDescription(answer));
+      });
 
-    // Signaling
-    socket.on("offer", async (offer) => {
-      await pc.setRemoteDescription(new RTCSessionDescription(offer));
-      const answer = await pc.createAnswer();
-      await pc.setLocalDescription(answer);
-      socket.emit("answer", answer);
-    });
-
-    socket.on("answer", async (answer) => {
-      await pc.setRemoteDescription(new RTCSessionDescription(answer));
-    });
-
-    socket.on("candidate", async (candidate) => {
-      try {
-        await pc.addIceCandidate(new RTCIceCandidate(candidate));
-      } catch (err) {
-        console.error("Error adding received ICE candidate", err);
-      }
-    });
-
-    // First peer creates offer
-    async function initCall() {
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-      socket.emit("offer", offer);
+      socket.on("peer-ice", ({ from, candidate }) => {
+        if (peers[from]) {
+          peers[from].addIceCandidate(new RTCIceCandidate(candidate));
+        }
+      });
     }
 
-    // Start automatically after a short delay
-    setTimeout(initCall, 2000);
+    function createPeer(id, stream, initiator) {
+      const pc = new RTCPeerConnection();
+
+      stream.getTracks().forEach(track => pc.addTrack(track, stream));
+
+      pc.ontrack = (event) => {
+        const video = document.createElement("video");
+        video.srcObject = event.streams[0];
+        video.autoplay = true;
+        videos.appendChild(video);
+      };
+
+      pc.onicecandidate = (event) => {
+        if (event.candidate) {
+          socket.emit("peer-ice", { to: id, candidate: event.candidate });
+        }
+      };
+
+      if (initiator) {
+        pc.onnegotiationneeded = async () => {
+          const offer = await pc.createOffer();
+          await pc.setLocalDescription(offer);
+          socket.emit("peer-offer", { to: id, offer });
+        };
+      }
+      return pc;
+    }
+
+    init();
   </script>
 </body>
 </html>
