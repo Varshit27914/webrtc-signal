@@ -13,8 +13,14 @@
 
   <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
   <script>
-    const socket = io("https://webrtc-signal.onrender.com"); // Replace with your Render server URL
-    const pc = new RTCPeerConnection();
+    const socket = io("https://webrtc-signal.onrender.com"); // your Render server URL
+
+    // ✅ Add STUN config here
+    const pc = new RTCPeerConnection({
+      iceServers: [
+        { urls: "stun:stun.l.google.com:19302" }
+      ]
+    });
 
     const localVideo = document.getElementById("localVideo");
     const remoteVideo = document.getElementById("remoteVideo");
