@@ -1,95 +1,150 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>WebRTC Demo</title>
-  <style>
-    video { width: 45%; margin: 5px; border: 2px solid #333; }
-  </style>
+  <meta charset="utf-8">
+  <title>WebRTC with Xirsys</title>
 </head>
 <body>
-  <h2>WebRTC Video Call</h2>
-  <video id="localVideo" autoplay playsinline muted></video>
-  <video id="remoteVideo" autoplay playsinline></video>
-
-  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+  <h1>WebRTC Test</h1>
+  <div id="videos"></div>
+  <script src="/socket.io/socket.io.js"></script>
   <script>
-  const socket = io("https://webrtc-signal.onrender.com");
-  let pc;
+    const socket = io();
+    let pc;
+    const videos = document.getElementById("videos");
 
-  async function getIceServers() {
-    const response = await fetch("https://global.xirsys.net/_turn/MyFirstApp", {
-      method: "PUT",
-      headers: {
-        "Authorization": "Basic " + btoa("ba****14:18954****140003"),
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({ format: "urls" })
-    });
+    async function init() {
+      // Get ICE servers from Node.js backend
+      const iceServers = await fetch("/ice").then(res => res.json());
 
-    const data = await response.json();
-    console.log("ICE Servers:", data.v.iceServers);
-    return data.v.iceServers;
-  }
+      // Create peer connection with TURN/STUN
+      pc = new RTCPeerConnection({
+        iceServers,
+        // uncomment this line to test TURN only:
+        // iceTransportPolicy: "relay"
+      });
 
-  async function initConnection() {
-    const iceServers = await getIceServers();
-    pc = new RTCPeerConnection({ iceServers });
+      // Local video
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      const myVideo = document.createElement("video");
+      myVideo.srcObject = stream;
+      myVideo.autoplay = true;
+      myVideo.muted = true;
+      videos.appendChild(myVideo);
 
-    const localVideo = document.getElementById("localVideo");
-    const remoteVideo = document.getElementById("remoteVideo");
+      stream.getTracks().forEach(track => pc.addTrack(track, stream));
 
-    // Local stream
-    const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-    localVideo.srcObject = stream;
-    stream.getTracks().forEach(track => pc.addTrack(track, stream));
+      // Remote video
+      pc.ontrack = (event) => {
+        const video = document.createElement("video");
+        video.srcObject = event.streams[0];
+        video.autoplay = true;
+        videos.appendChild(video);
+      };
 
-    // Remote stream
-    pc.ontrack = event => {
-      remoteVideo.srcObject = event.streams[0];
-    };
+      // ICE candidates
+      pc.onicecandidate = (e) => {
+        if (e.candidate) {
+          console.log("ICE candidate:", e.candidate);
+        }
+      };
 
-    // ICE candidates
-    pc.onicecandidate = event => {
-      if (event.candidate) {
-        socket.emit("candidate", event.candidate);
-      }
-    };
+      socket.emit("join-room");
 
-    // Signaling
-    socket.on("offer", async (offer) => {
-      await pc.setRemoteDescription(new RTCSessionDescription(offer));
-      const answer = await pc.createAnswer();
-      await pc.setLocalDescription(answer);
-      socket.emit("answer", answer);
-    });
+      socket.on("new-peer", async (id) => {
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        socket.emit("signal", { to: id, sdp: offer });
+      });
 
-    socket.on("answer", async (answer) => {
-      await pc.setRemoteDescription(new RTCSessionDescription(answer));
-    });
+      socket.on("signal", async (data) => {
+        if (data.sdp.type === "offer") {
+          await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
+          const answer = await pc.createAnswer();
+          await pc.setLocalDescription(answer);
+          socket.emit("signal", { to: data.from, sdp: answer });
+        } else if (data.sdp.type === "answer") {
+          await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
+        }
+      });
+    }
 
-    socket.on("candidate", async (candidate) => {
-      try {
-        await pc.addIceCandidate(new RTCIceCandidate(candidate));
-      } catch (err) {
-        console.error("Error adding candidate", err);
-      }
-    });
-  }
+    init();
+  </script>
+</body>
+</html>
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>WebRTC with Xirsys</title>
+</head>
+<body>
+  <h1>WebRTC Test</h1>
+  <div id="videos"></div>
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    const socket = io();
+    let pc;
+    const videos = document.getElementById("videos");
 
-  // First peer creates offer
-  async function initCall() {
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-    socket.emit("offer", offer);
-  }
+    async function init() {
+      // Get ICE servers from Node.js backend
+      const iceServers = await fetch("/ice").then(res => res.json());
 
-  // Start
-  (async () => {
-    await initConnection();
-    setTimeout(initCall, 2000);
-  })();
-</script>
+      // Create peer connection with TURN/STUN
+      pc = new RTCPeerConnection({
+        iceServers,
+        // uncomment this line to test TURN only:
+        // iceTransportPolicy: "relay"
+      });
 
+      // Local video
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      const myVideo = document.createElement("video");
+      myVideo.srcObject = stream;
+      myVideo.autoplay = true;
+      myVideo.muted = true;
+      videos.appendChild(myVideo);
+
+      stream.getTracks().forEach(track => pc.addTrack(track, stream));
+
+      // Remote video
+      pc.ontrack = (event) => {
+        const video = document.createElement("video");
+        video.srcObject = event.streams[0];
+        video.autoplay = true;
+        videos.appendChild(video);
+      };
+
+      // ICE candidates
+      pc.onicecandidate = (e) => {
+        if (e.candidate) {
+          console.log("ICE candidate:", e.candidate);
+        }
+      };
+
+      socket.emit("join-room");
+
+      socket.on("new-peer", async (id) => {
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        socket.emit("signal", { to: id, sdp: offer });
+      });
+
+      socket.on("signal", async (data) => {
+        if (data.sdp.type === "offer") {
+          await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
+          const answer = await pc.createAnswer();
+          await pc.setLocalDescription(answer);
+          socket.emit("signal", { to: data.from, sdp: answer });
+        } else if (data.sdp.type === "answer") {
+          await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
+        }
+      });
+    }
+
+    init();
   </script>
 </body>
 </html>
