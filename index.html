@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>WebRTC Demo</title>
+  <style>
+    video { width: 45%; margin: 5px; border: 2px solid #333; }
+  </style>
+</head>
+<body>
+  <h2>WebRTC Video Call</h2>
+  <video id="localVideo" autoplay playsinline muted></video>
+  <video id="remoteVideo" autoplay playsinline></video>
+
+  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+  <script>
+    const socket = io("https://YOUR_RENDER_URL"); // Replace with your Render server URL
+    const pc = new RTCPeerConnection();
+
+    const localVideo = document.getElementById("localVideo");
+    const remoteVideo = document.getElementById("remoteVideo");
+
+    // Local video
+    navigator.mediaDevices.getUserMedia({ video: true, audio: true })
+      .then(stream => {
+        localVideo.srcObject = stream;
+        stream.getTracks().forEach(track => pc.addTrack(track, stream));
+      });
+
+    // Remote video
+    pc.ontrack = event => {
+      remoteVideo.srcObject = event.streams[0];
+    };
+
+    // ICE candidates
+    pc.onicecandidate = event => {
+      if (event.candidate) {
+        socket.emit("candidate", event.candidate);
+      }
+    };
+
+    // Signaling
+    socket.on("offer", async (offer) => {
+      await pc.setRemoteDescription(new RTCSessionDescription(offer));
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      socket.emit("answer", answer);
+    });
+
+    socket.on("answer", async (answer) => {
+      await pc.setRemoteDescription(new RTCSessionDescription(answer));
+    });
+
+    socket.on("candidate", async (candidate) => {
+      try {
+        await pc.addIceCandidate(new RTCIceCandidate(candidate));
+      } catch (err) {
+        console.error("Error adding received ICE candidate", err);
+      }
+    });
+
+    // First peer creates offer
+    async function initCall() {
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      socket.emit("offer", offer);
+    }
+
+    // Start automatically after a short delay
+    setTimeout(initCall, 2000);
+  </script>
+</body>
+</html>
