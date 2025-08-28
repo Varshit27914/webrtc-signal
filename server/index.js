@@ -6,7 +6,7 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
-    origin: "*", // allow Netlify frontend
+    origin: "*",
     methods: ["GET", "POST"]
   }
 });
@@ -14,16 +14,41 @@ const io = new Server(server, {
 io.on("connection", (socket) => {
   console.log("🔗 User connected:", socket.id);
 
+  // Create a room
+  socket.on("createRoom", (roomCode, callback) => {
+    if (io.sockets.adapter.rooms.has(roomCode)) {
+      callback({ success: false, message: "Room already exists" });
+    } else {
+      socket.join(roomCode);
+      callback({ success: true });
+      console.log(`✅ Room ${roomCode} created by ${socket.id}`);
+    }
+  });
+
+  // Join a room
+  socket.on("joinRoom", (roomCode, callback) => {
+    if (io.sockets.adapter.rooms.has(roomCode)) {
+      socket.join(roomCode);
+      callback({ success: true });
+      console.log(`👤 ${socket.id} joined room ${roomCode}`);
+      // Notify the other peer
+      socket.to(roomCode).emit("ready");
+    } else {
+      callback({ success: false, message: "Room not found" });
+    }
+  });
+
+  // WebRTC signaling
   socket.on("offer", (data) => {
-    socket.broadcast.emit("offer", data);
+    socket.to(data.room).emit("offer", data.offer);
   });
 
   socket.on("answer", (data) => {
-    socket.broadcast.emit("answer", data);
+    socket.to(data.room).emit("answer", data.answer);
   });
 
   socket.on("candidate", (data) => {
-    socket.broadcast.emit("candidate", data);
+    socket.to(data.room).emit("candidate", data.candidate);
   });
 
   socket.on("disconnect", () => {
