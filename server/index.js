@@ -1,50 +1,44 @@
 const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
+const path = require("path");
 
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
 
-// Serve static files (our index.html)
-app.use(express.static(__dirname));
+const PORT = process.env.PORT || 3000;
+
+app.use(express.static(path.join(__dirname, ".")));
+
+let peers = {};
 
 io.on("connection", (socket) => {
   console.log("🔗 User connected:", socket.id);
 
-  // Tell others a new user joined
+  peers[socket.id] = socket.id;
+
   socket.broadcast.emit("user-joined", socket.id);
 
-  // Forward offer
   socket.on("offer", (data) => {
-    io.to(data.target).emit("offer", {
-      sdp: data.sdp,
-      caller: socket.id,
-    });
+    io.to(data.to).emit("offer", { from: socket.id, sdp: data.sdp });
   });
 
-  // Forward answer
   socket.on("answer", (data) => {
-    io.to(data.target).emit("answer", {
-      sdp: data.sdp,
-      caller: socket.id,
-    });
+    io.to(data.to).emit("answer", { from: socket.id, sdp: data.sdp });
   });
 
-  // Forward ICE candidates
   socket.on("ice-candidate", (data) => {
-    io.to(data.target).emit("ice-candidate", {
-      candidate: data.candidate,
-      from: socket.id,
-    });
+    io.to(data.to).emit("ice-candidate", { from: socket.id, candidate: data.candidate });
   });
 
-  // On disconnect
   socket.on("disconnect", () => {
     console.log("❌ User disconnected:", socket.id);
+    delete peers[socket.id];
     socket.broadcast.emit("user-left", socket.id);
   });
 });
 
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));
+server.listen(PORT, () => {
+  console.log(`🚀 Server running on http://localhost:${PORT}`);
+});
