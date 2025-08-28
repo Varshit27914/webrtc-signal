@@ -13,37 +13,37 @@
 
   <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
   <script>
-    const socket = io("https://webrtc-signal.onrender.com"); // your Render server URL
+  const socket = io("https://webrtc-signal.onrender.com");
+  let pc;
 
-    // ✅ Using Xirsys STUN + TURN
-    const pc = new RTCPeerConnection({
-      iceServers: [
-        { urls: "stun:stun.l.google.com:19302" },
-        { urls: "stun:global.xirsys.net" },
-        {
-          urls: [
-            "turn:global.xirsys.net:80?transport=udp",
-            "turn:global.xirsys.net:3478?transport=udp",
-            "turns:global.xirsys.net:443?transport=tcp",
-            "turns:global.xirsys.net:5349?transport=tcp"
-          ],
-          username: "backup27914",       // 👈 replace with your ident
-          credential: "18954eb4-8410-11f0-aaf2-0242ac140003"     // 👈 replace with your secret
-        }
-      ]
+  async function getIceServers() {
+    const response = await fetch("https://global.xirsys.net/_turn/MyFirstApp", {
+      method: "PUT",
+      headers: {
+        "Authorization": "Basic " + btoa("ba****14:18954****140003"),
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ format: "urls" })
     });
+
+    const data = await response.json();
+    console.log("ICE Servers:", data.v.iceServers);
+    return data.v.iceServers;
+  }
+
+  async function initConnection() {
+    const iceServers = await getIceServers();
+    pc = new RTCPeerConnection({ iceServers });
 
     const localVideo = document.getElementById("localVideo");
     const remoteVideo = document.getElementById("remoteVideo");
 
-    // Local video
-    navigator.mediaDevices.getUserMedia({ video: true, audio: true })
-      .then(stream => {
-        localVideo.srcObject = stream;
-        stream.getTracks().forEach(track => pc.addTrack(track, stream));
-      });
+    // Local stream
+    const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+    localVideo.srcObject = stream;
+    stream.getTracks().forEach(track => pc.addTrack(track, stream));
 
-    // Remote video
+    // Remote stream
     pc.ontrack = event => {
       remoteVideo.srcObject = event.streams[0];
     };
@@ -71,19 +71,25 @@
       try {
         await pc.addIceCandidate(new RTCIceCandidate(candidate));
       } catch (err) {
-        console.error("Error adding received ICE candidate", err);
+        console.error("Error adding candidate", err);
       }
     });
+  }
 
-    // First peer creates offer
-    async function initCall() {
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-      socket.emit("offer", offer);
-    }
+  // First peer creates offer
+  async function initCall() {
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    socket.emit("offer", offer);
+  }
 
-    // Start automatically after a short delay
+  // Start
+  (async () => {
+    await initConnection();
     setTimeout(initCall, 2000);
+  })();
+</script>
+
   </script>
 </body>
 </html>
