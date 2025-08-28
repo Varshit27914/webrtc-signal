@@ -1,61 +1,100 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>WebRTC Demo</title>
+  <title>WebRTC Rooms Demo</title>
   <style>
+    body { font-family: sans-serif; text-align: center; margin-top: 40px; }
     video { width: 45%; margin: 5px; border: 2px solid #333; }
   </style>
 </head>
 <body>
-  <h2>WebRTC Video Call</h2>
+  <h2>WebRTC with Rooms</h2>
+
+  <div id="controls">
+    <button id="createRoom">Create Room</button>
+    <input id="roomCodeInput" placeholder="Enter 4-digit code">
+    <button id="joinRoom">Join Room</button>
+    <p id="roomDisplay"></p>
+  </div>
+
   <video id="localVideo" autoplay playsinline muted></video>
   <video id="remoteVideo" autoplay playsinline></video>
 
   <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
   <script>
-    const socket = io("https://webrtc-signal.onrender.com"); // Replace with your Render server URL
-    const pc = new RTCPeerConnection({
-  iceServers: [
-    { urls: "stun:stun.l.google.com:19302" },
-    {
-      urls: "turn:global.relay.metered.ca:80",
-      username: "openai",
-      credential: "openai123"
-    }
-  ]
-});
-
-
-
+    const socket = io("https://YOUR_RENDER_URL"); // replace with your Render URL
+    let roomCode = null;
+    let pc;
 
     const localVideo = document.getElementById("localVideo");
     const remoteVideo = document.getElementById("remoteVideo");
 
-    // Local video
-    navigator.mediaDevices.getUserMedia({ video: true, audio: true })
-      .then(stream => {
-        localVideo.srcObject = stream;
-        stream.getTracks().forEach(track => pc.addTrack(track, stream));
+    async function initPeerConnection() {
+      pc = new RTCPeerConnection({
+        iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
       });
 
-    // Remote video
-    pc.ontrack = event => {
-      remoteVideo.srcObject = event.streams[0];
+      // Local media
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      localVideo.srcObject = stream;
+      stream.getTracks().forEach(track => pc.addTrack(track, stream));
+
+      // Remote media
+      pc.ontrack = event => {
+        remoteVideo.srcObject = event.streams[0];
+      };
+
+      // ICE candidates
+      pc.onicecandidate = event => {
+        if (event.candidate) {
+          socket.emit("candidate", { room: roomCode, candidate: event.candidate });
+        }
+      };
+    }
+
+    // Create Room
+    document.getElementById("createRoom").onclick = () => {
+      roomCode = Math.floor(1000 + Math.random() * 9000).toString(); // 4 digit
+      socket.emit("createRoom", roomCode, (response) => {
+        if (response.success) {
+          document.getElementById("roomDisplay").innerText = "Room Code: " + roomCode;
+          initPeerConnection();
+        } else {
+          alert(response.message);
+        }
+      });
     };
 
-    // ICE candidates
-    pc.onicecandidate = event => {
-      if (event.candidate) {
-        socket.emit("candidate", event.candidate);
-      }
+    // Join Room
+    document.getElementById("joinRoom").onclick = () => {
+      roomCode = document.getElementById("roomCodeInput").value;
+      socket.emit("joinRoom", roomCode, async (response) => {
+        if (response.success) {
+          document.getElementById("roomDisplay").innerText = "Joined Room: " + roomCode;
+          await initPeerConnection();
+
+          // Create answer after receiving offer
+        } else {
+          alert(response.message);
+        }
+      });
     };
 
     // Signaling
+    socket.on("ready", async () => {
+      // If I'm the room creator, make the offer
+      if (roomCode) {
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        socket.emit("offer", { room: roomCode, offer });
+      }
+    });
+
     socket.on("offer", async (offer) => {
       await pc.setRemoteDescription(new RTCSessionDescription(offer));
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
-      socket.emit("answer", answer);
+      socket.emit("answer", { room: roomCode, answer });
     });
 
     socket.on("answer", async (answer) => {
@@ -66,19 +105,9 @@
       try {
         await pc.addIceCandidate(new RTCIceCandidate(candidate));
       } catch (err) {
-        console.error("Error adding received ICE candidate", err);
+        console.error("Error adding ICE candidate", err);
       }
     });
-
-    // First peer creates offer
-    async function initCall() {
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-      socket.emit("offer", offer);
-    }
-
-    // Start automatically after a short delay
-    setTimeout(initCall, 2000);
   </script>
 </body>
 </html>
