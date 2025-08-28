@@ -2,113 +2,90 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>WebRTC Multi-User Demo</title>
+  <title>WebRTC Demo</title>
   <style>
-    body { font-family: Arial, sans-serif; background: #f4f4f4; text-align: center; }
-    video { width: 300px; margin: 10px; border-radius: 8px; background: black; }
+    body { font-family: sans-serif; text-align: center; }
+    video { width: 300px; height: 200px; margin: 5px; background: black; }
     #videos { display: flex; flex-wrap: wrap; justify-content: center; }
   </style>
 </head>
 <body>
-  <h2>WebRTC Multi-User Demo</h2>
+  <h2>WebRTC Demo - Multi User</h2>
   <div id="videos"></div>
 
   <script src="/socket.io/socket.io.js"></script>
   <script>
     const socket = io();
     const peers = {};
-    const videosDiv = document.getElementById("videos");
+    const videoGrid = document.getElementById("videos");
 
-    const localVideo = document.createElement("video");
-    localVideo.autoplay = true;
-    localVideo.muted = true;
-    videosDiv.appendChild(localVideo);
+    // Add video stream to grid
+    function addVideo(stream, id) {
+      let video = document.getElementById(id);
+      if (!video) {
+        video = document.createElement("video");
+        video.id = id;
+        video.autoplay = true;
+        video.playsinline = true;
+        videoGrid.appendChild(video);
+      }
+      video.srcObject = stream;
+    }
 
     navigator.mediaDevices.getUserMedia({ video: true, audio: true })
       .then(stream => {
-        localVideo.srcObject = stream;
+        addVideo(stream, "me");
 
-        socket.on("signal", async (data) => {
-          if (data.id === socket.id) return;
-
-          let peer = peers[data.id];
-          if (!peer) {
-            peer = new RTCPeerConnection();
-            peers[data.id] = peer;
-
-            // Add our stream to peer
-            stream.getTracks().forEach(track => peer.addTrack(track, stream));
-
-            // Create video element for peer
-            const remoteVideo = document.createElement("video");
-            remoteVideo.autoplay = true;
-            remoteVideo.id = data.id;
-            videosDiv.appendChild(remoteVideo);
-
-            peer.ontrack = (event) => {
-              remoteVideo.srcObject = event.streams[0];
-            };
-
-            peer.onicecandidate = (event) => {
-              if (event.candidate) {
-                socket.emit("signal", { candidate: event.candidate });
-              }
-            };
-          }
-
-          if (data.offer) {
-            await peer.setRemoteDescription(new RTCSessionDescription(data.offer));
-            const answer = await peer.createAnswer();
-            await peer.setLocalDescription(answer);
-            socket.emit("signal", { answer });
-          }
-
-          if (data.answer) {
-            await peer.setRemoteDescription(new RTCSessionDescription(data.answer));
-          }
-
-          if (data.candidate) {
-            try {
-              await peer.addIceCandidate(new RTCIceCandidate(data.candidate));
-            } catch (e) {
-              console.error("Error adding ICE candidate", e);
-            }
-          }
-        });
-
-        // When a new user joins, create an offer
-        socket.on("user-connected", async (id) => {
-          console.log("New user:", id);
+        socket.on("user-joined", id => {
           const peer = new RTCPeerConnection();
-          peers[id] = peer;
-
           stream.getTracks().forEach(track => peer.addTrack(track, stream));
 
-          const remoteVideo = document.createElement("video");
-          remoteVideo.autoplay = true;
-          remoteVideo.id = id;
-          videosDiv.appendChild(remoteVideo);
+          peer.ontrack = event => addVideo(event.streams[0], id);
+          peer.onicecandidate = e => e.candidate && socket.emit("ice-candidate", { to: id, candidate: e.candidate });
 
-          peer.ontrack = (event) => {
-            remoteVideo.srcObject = event.streams[0];
-          };
+          peer.createOffer()
+            .then(offer => {
+              peer.setLocalDescription(offer);
+              socket.emit("offer", { to: id, sdp: offer });
+            });
 
-          peer.onicecandidate = (event) => {
-            if (event.candidate) {
-              socket.emit("signal", { candidate: event.candidate });
-            }
-          };
-
-          const offer = await peer.createOffer();
-          await peer.setLocalDescription(offer);
-          socket.emit("signal", { offer });
+          peers[id] = peer;
         });
 
-        socket.on("user-disconnected", (id) => {
-          const video = document.getElementById(id);
-          if (video) video.remove();
-          if (peers[id]) peers[id].close();
-          delete peers[id];
+        socket.on("offer", async data => {
+          const peer = new RTCPeerConnection();
+          stream.getTracks().forEach(track => peer.addTrack(track, stream));
+
+          peer.ontrack = event => addVideo(event.streams[0], data.from);
+          peer.onicecandidate = e => e.candidate && socket.emit("ice-candidate", { to: data.from, candidate: e.candidate });
+
+          await peer.setRemoteDescription(new RTCSessionDescription(data.sdp));
+          const answer = await peer.createAnswer();
+          await peer.setLocalDescription(answer);
+
+          socket.emit("answer", { to: data.from, sdp: answer });
+          peers[data.from] = peer;
+        });
+
+        socket.on("answer", async data => {
+          await peers[data.from].setRemoteDescription(new RTCSessionDescription(data.sdp));
+        });
+
+        socket.on("ice-candidate", async data => {
+          try {
+            await peers[data.from].addIceCandidate(new RTCIceCandidate(data.candidate));
+          } catch (err) {
+            console.error("ICE error:", err);
+          }
+        });
+
+        socket.on("user-left", id => {
+          if (peers[id]) {
+            peers[id].close();
+            delete peers[id];
+          }
+          const vid = document.getElementById(id);
+          if (vid) vid.remove();
         });
       });
   </script>
