@@ -1,5 +1,5 @@
 // main.js - WebRTC front-end using WebSocket signalling
-const SIGNALING_SERVER = (window.SIGNALING_SERVER_URL || 'ws://localhost:3000'); 
+const SIGNALING_SERVER = (window.wss://webrtc-signal.onrender.com || 'ws://localhost:3000'); 
 // On Netlify set window.SIGNALING_SERVER_URL via a small inline script or use your deployed Render ws URL.
 
 const servers = {
