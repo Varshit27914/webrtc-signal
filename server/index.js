@@ -1,8 +1,11 @@
-import express from "express";
-import http from "http";
-import { Server } from "socket.io";
+const express = require("express");
+const http = require("http");
+const { Server } = require("socket.io");
+const cors = require("cors");
 
 const app = express();
+app.use(cors());
+
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
@@ -11,50 +14,53 @@ const io = new Server(server, {
   }
 });
 
+const rooms = {}; // roomCode -> [socketIds]
+
 io.on("connection", (socket) => {
   console.log("🔗 User connected:", socket.id);
 
-  // Create a room
-  socket.on("createRoom", (roomCode, callback) => {
-    if (io.sockets.adapter.rooms.has(roomCode)) {
-      callback({ success: false, message: "Room already exists" });
+  // Create Room
+  socket.on("create-room", () => {
+    let code;
+    do {
+      code = Math.floor(1000 + Math.random() * 9000).toString();
+    } while (rooms[code]); // ensure unique
+
+    rooms[code] = [socket.id];
+    socket.join(code);
+    socket.emit("room-created", code);
+    console.log(`✅ Room created: ${code}`);
+  });
+
+  // Join Room
+  socket.on("join-room", (code) => {
+    if (rooms[code] && rooms[code].length < 2) {
+      rooms[code].push(socket.id);
+      socket.join(code);
+      socket.emit("room-joined", code);
+      socket.to(code).emit("user-joined", socket.id);
+      console.log(`👥 ${socket.id} joined room ${code}`);
     } else {
-      socket.join(roomCode);
-      callback({ success: true });
-      console.log(`✅ Room ${roomCode} created by ${socket.id}`);
+      socket.emit("room-error", "Room full or not found");
     }
   });
 
-  // Join a room
-  socket.on("joinRoom", (roomCode, callback) => {
-    if (io.sockets.adapter.rooms.has(roomCode)) {
-      socket.join(roomCode);
-      callback({ success: true });
-      console.log(`👤 ${socket.id} joined room ${roomCode}`);
-      // Notify the other peer
-      socket.to(roomCode).emit("ready");
-    } else {
-      callback({ success: false, message: "Room not found" });
-    }
+  // Relay signaling messages
+  socket.on("signal", ({ code, data }) => {
+    socket.to(code).emit("signal", { id: socket.id, data });
   });
 
-  // WebRTC signaling
-  socket.on("offer", (data) => {
-    socket.to(data.room).emit("offer", data.offer);
-  });
-
-  socket.on("answer", (data) => {
-    socket.to(data.room).emit("answer", data.answer);
-  });
-
-  socket.on("candidate", (data) => {
-    socket.to(data.room).emit("candidate", data.candidate);
-  });
-
+  // Cleanup on disconnect
   socket.on("disconnect", () => {
-    console.log("❌ User disconnected:", socket.id);
+    for (const code in rooms) {
+      rooms[code] = rooms[code].filter((id) => id !== socket.id);
+      if (rooms[code].length === 0) {
+        delete rooms[code];
+        console.log(`🗑️ Room ${code} deleted`);
+      }
+    }
   });
 });
 
 const PORT = process.env.PORT || 5000;
-server.listen(PORT, () => console.log(`✅ Signaling server running on ${PORT}`));
+server.listen(PORT, () => console.log(`🚀 Server running on ${PORT}`));
