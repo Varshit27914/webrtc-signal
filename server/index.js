@@ -20,37 +20,46 @@ io.on("connection", (socket) => {
   console.log("🔗 User connected:", socket.id);
 
   // Create Room
-  socket.on("create-room", () => {
-    let code;
-    do {
-      code = Math.floor(1000 + Math.random() * 9000).toString();
-    } while (rooms[code]); // ensure unique
-
+  socket.on("createRoom", (code, cb) => {
+    if (rooms[code]) {
+      cb({ success: false, message: "Room already exists" });
+      return;
+    }
     rooms[code] = [socket.id];
     socket.join(code);
-    socket.emit("room-created", code);
+    cb({ success: true });
     console.log(`✅ Room created: ${code}`);
   });
 
   // Join Room
-  socket.on("join-room", (code) => {
+  socket.on("joinRoom", (code, cb) => {
     if (rooms[code] && rooms[code].length < 2) {
       rooms[code].push(socket.id);
       socket.join(code);
-      socket.emit("room-joined", code);
-      socket.to(code).emit("user-joined", socket.id);
+      cb({ success: true });
+      io.to(code).emit("ready"); // notify both peers
       console.log(`👥 ${socket.id} joined room ${code}`);
     } else {
-      socket.emit("room-error", "Room full or not found");
+      cb({ success: false, message: "Room full or not found" });
     }
   });
 
-  // Relay signaling messages
-  socket.on("signal", ({ code, data }) => {
-    socket.to(code).emit("signal", { id: socket.id, data });
+  // Offer
+  socket.on("offer", ({ room, offer }) => {
+    socket.to(room).emit("offer", offer);
   });
 
-  // Cleanup on disconnect
+  // Answer
+  socket.on("answer", ({ room, answer }) => {
+    socket.to(room).emit("answer", answer);
+  });
+
+  // ICE Candidate
+  socket.on("candidate", ({ room, candidate }) => {
+    socket.to(room).emit("candidate", candidate);
+  });
+
+  // Cleanup
   socket.on("disconnect", () => {
     for (const code in rooms) {
       rooms[code] = rooms[code].filter((id) => id !== socket.id);
