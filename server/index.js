@@ -1,4 +1,4 @@
-// server.mjs (or package.json -> { "type": "module" })
+// server.mjs
 import express from "express";
 import http from "http";
 import { Server } from "socket.io";
@@ -8,6 +8,7 @@ const app = express();
 app.use(cors());
 
 const server = http.createServer(app);
+
 const io = new Server(server, {
   cors: {
     origin: "*",
@@ -60,7 +61,7 @@ io.on("connection", (socket) => {
     socket.to(room).emit("candidate", candidate);
   });
 
-  // Cleanup on disconnect
+  // Cleanup
   socket.on("disconnect", () => {
     for (const code in rooms) {
       rooms[code] = rooms[code].filter((id) => id !== socket.id);
