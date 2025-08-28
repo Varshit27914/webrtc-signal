@@ -4,6 +4,12 @@ const SIGNALING_SERVER =
     ? "ws://localhost:3000"
     : "wss://webrtc-signal.onrender.com";
 
+const socket = new WebSocket(SIGNALING_SERVER);
+
+socket.onopen = () => console.log("✅ Connected to signaling server");
+socket.onerror = (err) => console.error("❌ WebSocket error:", err);
+socket.onclose = () => console.log("⚠️ WebSocket closed");
+
 // On Netlify set window.SIGNALING_SERVER_URL via a small inline script or use your deployed Render ws URL.
 
 const servers = {
